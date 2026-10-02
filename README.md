@@ -3,6 +3,7 @@ S3 Simulator – AWS Service Simulation & Enhancement
 A browser-based simulation of Amazon S3 (Simple Storage Service), built with HTML, CSS and vanilla JavaScript as an individual assignment.
 
 Live demo: https://suhanicodes-1111.github.io/S3-Simulator-AWS-Service-Simulation/
+
 Student: Suhani Srivastava | Reg. No.: 24BDS1039 | Course: Cloud Architecture Design
 
 1. About Amazon S3
