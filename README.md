@@ -2,9 +2,9 @@
 
 A browser-based simulation of **Amazon S3 (Simple Storage Service)**, built with HTML, CSS and vanilla JavaScript as an individual assignment.
 
-**Live demo:** https://YOUR-USERNAME.github.io/YOUR-REPO/
+**Live demo:**https://suhanicodes-1111.github.io/S3-Simulator-AWS-Service-Simulation/
 
-**Student:** YOUR NAME | **Reg. No.:** YOUR REG NO | **Course:** YOUR COURSE
+**Student:** Suhani Srivastava | **Reg. No.:** 24BDS1039 | **Course:** Cloud Architecture Design
 
 ---
 
@@ -49,8 +49,8 @@ Amazon S3 is an object storage service. Data is stored as **objects** (a key, th
 ## 6. How to Run Locally
 
 ```bash
-git clone https://github.com/YOUR-USERNAME/YOUR-REPO.git
-cd YOUR-REPO
+git clone https://github.com/suhanicodes-1111/S3-Simulator-AWS-Service-Simulation.git
+cd S3-Simulator-AWS-Service-Simulation
 # open index.html in any browser
 ```
 
