@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>S3 Simulator – AWS Service Simulation</title>
+<style>
+:root{--bg:#f2f3f3;--card:#fff;--ink:#16191f;--mut:#687078;--nav:#232f3e;--or:#ff9900;--bd:#d5dbdb;--ok:#1d8102;--err:#d13212}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+header{background:var(--nav);color:#fff;padding:12px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+header b{color:var(--or);font-size:20px}header span{color:#aab7b8;font-size:13px}
+.wrap{display:grid;grid-template-columns:290px 1fr;gap:16px;padding:16px;max-width:1200px;margin:auto}
+@media(max-width:800px){.wrap{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:6px;padding:14px;margin-bottom:16px}
+h3{margin:0 0 10px;font-size:15px}
+input,select,button{font:inherit;padding:7px 10px;border:1px solid var(--bd);border-radius:4px}
+input,select{width:100%;margin-bottom:8px}
+button{cursor:pointer;background:#fff}button:hover{background:#f2f3f3}
+.pri{background:var(--or);border-color:#ec7211;font-weight:600}.pri:hover{background:#ec7211}
+.danger{color:var(--err)}
+.b{display:flex;justify-content:space-between;align-items:center;padding:8px;border:1px solid var(--bd);border-radius:4px;margin-bottom:6px;cursor:pointer}
+.b.on{border-color:var(--or);background:#fff7e8}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:7px;border-bottom:1px solid var(--bd)}
+.tag{font-size:11px;padding:2px 6px;border-radius:10px;background:#eaeded}.pub{background:#fde8e4;color:var(--err)}.prv{background:#e6f4e1;color:var(--ok)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+#log{background:#0f1b2a;color:#9be28f;font:12px monospace;padding:10px;height:150px;overflow:auto;border-radius:4px}
+#log .e{color:#ff8a75}.mut{color:var(--mut);font-size:12px}
+.enh{border:2px dashed var(--or)}code{word-break:break-all;font-size:12px;background:#f2f3f3;padding:2px 4px;display:block;margin:6px 0}
+</style>
+</head>
+<body>
+<header><b>☁ S3 Simulator</b><span>Amazon S3 simulation + IAM, Lifecycle policies &amp; CloudFront</span></header>
+<div class="wrap">
+<aside>
+  <div class="card"><h3>Create bucket</h3>
+    <input id="bn" placeholder="bucket-name (3–63, lowercase)">
+    <select id="rg"><option>ap-south-1</option><option>us-east-1</option><option>eu-west-1</option></select>
+    <label class="mut"><input type="checkbox" id="vr" style="width:auto"> Enable versioning</label><br><br>
+    <button class="pri" onclick="mk()">Create bucket</button></div>
+  <div class="card enh"><h3>⭐ 5. IAM – Identity &amp; Access</h3><div id="iam"></div><p class="mut">Switch identity to see permissions enforced on every S3 action. New users have no policy (implicit deny).</p></div>
+  <div class="card"><h3>Your buckets</h3><div id="bl"></div></div>
+  <div class="card"><h3>API activity log</h3><div id="log"></div></div>
+</aside>
+<main id="main"></main>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+let B={},cur=null,vid=0;
+const RATE={STANDARD:.023,STANDARD_IA:.0125,GLACIER:.004}; // $/GB-month
+const log=(m,err)=>{const d=document.createElement('div');if(err)d.className='e';d.textContent=new Date().toLocaleTimeString()+'  '+m;$('log').prepend(d)};
+const fmt=n=>n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':(n/1048576).toFixed(2)+' MB';
+
+function mk(){if(!can('s3:CreateBucket','w'))return;
+  const n=$('bn').value.trim();
+  if(!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(n))return log('CreateBucket 400 InvalidBucketName (3-63 chars, lowercase, numbers, . or -)',1);
+  if(B[n])return log('CreateBucket 409 BucketAlreadyExists (names are globally unique)',1);
+  B[n]={region:$('rg').value,ver:$('vr').checked,objs:{}};cur=n;$('bn').value='';
+  log('CreateBucket 200 OK → s3://'+n);draw();
+}
+function delBucket(n){if(!can('s3:DeleteBucket','w'))return;
+  if(Object.keys(B[n].objs).length)return log('DeleteBucket 409 BucketNotEmpty – empty it first',1);
+  delete B[n];if(cur===n)cur=null;log('DeleteBucket 204 → '+n);draw();
+}
+function upload(files){if(!can('s3:PutObject','w'))return;
+  const b=B[cur];
+  for(const f of files){
+    const o=b.objs[f.name]||(b.objs[f.name]={cls:'STANDARD',pub:false,v:[]});
+    const ver={id:b.ver?'v'+(++vid)+Math.random().toString(36).slice(2,7):'null',size:f.size,blob:f,date:new Date().toLocaleString()};
+    if(b.ver)o.v.unshift(ver);else o.v=[ver];
+    log('PutObject 200 '+f.name+(b.ver?' (VersionId '+ver.id+')':''));
+  }
+  draw();
+}
+function toggleVer(){if(!can('s3:PutBucketVersioning','w'))return;B[cur].ver=!B[cur].ver;log('PutBucketVersioning → '+(B[cur].ver?'Enabled':'Suspended'));draw()}
+function setCls(k,c){if(!can('s3:CopyObject','w'))return;B[cur].objs[k].cls=c;log('CopyObject StorageClass='+c+' '+k);draw()}
+function togglePub(k){if(!can('s3:PutObjectAcl','w'))return;const o=B[cur].objs[k];o.pub=!o.pub;log('PutObjectAcl '+k+' → '+(o.pub?'public-read':'private'));draw()}
+function delObj(k){if(!can('s3:DeleteObject','w'))return;
+  const b=B[cur];
+  if(b.ver){b.objs[k].marker=true;log('DeleteObject '+k+' → delete marker added (versions kept)')}
+  else{delete b.objs[k];log('DeleteObject 204 '+k)}
+  draw();
+}
+function restore(k){if(!can('s3:DeleteObject','w'))return;delete B[cur].objs[k].marker;log('Delete marker removed → '+k+' restored');draw()}
+function dl(f,name){const a=document.createElement('a');a.href=URL.createObjectURL(f);a.download=name;a.click()}
+function get(k,pre){if(!pre&&!can('s3:GetObject','r'))return;
+  const o=B[cur].objs[k];
+  if(o.marker)return log('GetObject 404 NoSuchKey (delete marker) '+k,1);
+  if(!o.pub&&!pre)return log('GET https://'+cur+'.s3.amazonaws.com/'+k+' → 403 AccessDenied (object is private)',1);
+  log('GetObject 200 '+k);dl(o.v[0].blob,k);
+}
+/* ENHANCEMENT 1: pre-signed URLs with live expiry */
+let signed={};
+function presign(k){if(!can('s3:GetObject','r'))return;
+  const sec=parseInt($('ex').value)||30;
+  const sig=Array.from({length:24},()=>'0123456789abcdef'[Math.random()*16|0]).join('');
+  signed[k]={exp:Date.now()+sec*1000,url:`https://${cur}.s3.${B[cur].region}.amazonaws.com/${k}?X-Amz-Expires=${sec}&X-Amz-Signature=${sig}`};
+  log('Generated pre-signed URL for '+k+' (valid '+sec+'s)');draw();
+}
+function useSigned(k){
+  const s=signed[k];
+  if(Date.now()>s.exp)return log('GET pre-signed URL → 403 AccessDenied: Request has expired',1);
+  log('GET pre-signed URL → 200 OK (private object shared temporarily)');get(k,true);
+}
+setInterval(()=>{document.querySelectorAll('[data-exp]').forEach(e=>{const s=Math.round((e.dataset.exp-Date.now())/1000);e.textContent=s>0?'expires in '+s+'s':'EXPIRED';e.style.color=s>0?'var(--ok)':'var(--err)'})},500);
+
+/* IAM */
+let U={admin:'AdministratorAccess'},who='admin';
+const PERM={AdministratorAccess:'w',AmazonS3FullAccess:'w',AmazonS3ReadOnlyAccess:'r'};
+function can(a,t){const p=U[who],lv=PERM[p]||'';const ok=lv==='w'||(lv==='r'&&t==='r');if(!ok)log(a+' 403 AccessDenied: IAM user "'+who+'" '+(p?'has '+p+' (read-only)':'has no policy – implicit deny'),1);return ok}
+function addU(){const n=$('nu').value.trim();if(!/^[a-z0-9_-]{3,30}$/i.test(n)||U[n])return log('CreateUser 400/409 invalid or duplicate name',1);U[n]='';log('CreateUser 200 → '+n+' (no permissions yet)');draw()}
+function iam(){$('iam').innerHTML=`<label class="mut">Signed in as</label><select onchange="who=this.value;log('Switched identity → '+who);draw()">${Object.keys(U).map(u=>`<option ${u===who?'selected':''}>${u}</option>`).join('')}</select>
+<div class="row" style="flex-wrap:nowrap"><input id="nu" placeholder="new IAM user" style="margin:0"><button onclick="addU()">Add</button></div><br>
+${Object.keys(U).filter(u=>u!=='admin').map(u=>`<div class="mut">Policy for ${u}</div><select onchange="U['${u}']=this.value;log('AttachUserPolicy '+(this.value||'none')+' → ${u}');draw()"><option value="">(no policy)</option>${Object.keys(PERM).map(p=>`<option ${U[u]===p?'selected':''}>${p}</option>`).join('')}</select>`).join('')}`}
+/* Lifecycle */
+function age(n){if(!can('s3:PutLifecycleConfiguration','w'))return;const b=B[cur],l=b.lc;Object.keys(b.objs).forEach(k=>{const o=b.objs[k];o.age=(o.age|0)+n;
+ if(l.e&&o.age>=l.e){delete b.objs[k];log('Lifecycle: EXPIRED & deleted '+k+' (age '+o.age+'d)')}
+ else if(l.g&&o.age>=l.g&&o.cls!=='GLACIER'){o.cls='GLACIER';log('Lifecycle: TRANSITION '+k+' → GLACIER (age '+o.age+'d)')}});
+ log('Simulated clock +'+n+' days');draw()}
+/* CloudFront */
+function cdnT(){if(!can('cloudfront:UpdateDistribution','w'))return;const b=B[cur];b.cdn=!b.cdn;b.cache={};log('CloudFront '+(b.cdn?'distribution created (origin s3://'+cur+', OAC on)':'distribution disabled'));draw()}
+function cdnGet(k){const b=B[cur],o=b.objs[k];b.cache=b.cache||{};if(o.marker)return log('CloudFront 404 '+k,1);
+ if(b.cache[k])log('CloudFront GET '+k+' → 200 X-Cache: Hit (served from edge, no S3 request)');
+ else{b.cache[k]=1;log('CloudFront GET '+k+' → 200 X-Cache: Miss (fetched from S3 origin via OAC, now cached)')}
+ dl(o.v[0].blob,k)}
+function inval(){B[cur].cache={};log('CreateInvalidation /* → edge cache cleared');draw()}
+function extra(b){const l=b.lc||(b.lc={g:0,e:0});return `<div class="card enh"><h3>🔗 Integrated AWS services</h3>
+<p><b>3. S3 Lifecycle policy:</b> move to Glacier after <input type="number" min="0" value="${l.g}" style="width:70px;display:inline" onchange="B[cur].lc.g=+this.value"> days · delete after <input type="number" min="0" value="${l.e}" style="width:70px;display:inline" onchange="B[cur].lc.e=+this.value"> days (0 = off)<br>
+<button onclick="age(30)">⏩ +30 days</button> <button onclick="age(90)">⏩ +90 days</button> <span class="mut">Fast-forward the clock and watch objects transition or expire.</span></p>
+<p><b>4. CloudFront CDN:</b> <button onclick="cdnT()">${b.cdn?'Disable':'Enable'} CloudFront</button> ${b.cdn?'<button onclick="inval()">Invalidate cache</button>':''}<br>
+<span class="mut">When enabled, each object gets a "CDN GET" button. The first request is a cache Miss (fetched from S3); later ones are a Hit. With Origin Access Control the CDN can serve private objects.</span></p></div>`}
+function draw(){iam();
+  $('bl').innerHTML=Object.keys(B).map(n=>`<div class="b ${n===cur?'on':''}" onclick="cur='${n}';draw()"><span>🪣 ${n}<br><span class="mut">${B[n].region}</span></span><button class="danger" onclick="event.stopPropagation();delBucket('${n}')">✕</button></div>`).join('')||'<span class="mut">No buckets yet.</span>';
+  if(!cur){$('main').innerHTML='<div class="card"><h3>Welcome</h3><p>Amazon S3 is object storage: data lives as <b>objects</b> (file + metadata + key) inside globally-unique <b>buckets</b>. Create a bucket to begin, then upload, version, secure and share objects.</p></div>';return}
+  const b=B[cur],keys=Object.keys(b.objs);let tot=0,cost=0;
+  const rows=keys.map(k=>{const o=b.objs[k],sz=o.v[0].size;if(!o.marker){tot+=sz;cost+=sz/1073741824*RATE[o.cls]}
+    const s=signed[k];
+    return `<tr><td>${o.marker?'<s>'+k+'</s> <span class="tag">delete marker</span>':k}${b.ver?`<br><span class="mut">${o.v.length} version(s): ${o.v.map(v=>v.id).join(', ')}</span>`:''}</td>
+    <td>${fmt(sz)}<br><span class="mut">${o.age|0}d old</span></td>
+    <td><select onchange="setCls('${k}',this.value)" style="width:auto;margin:0">${Object.keys(RATE).map(c=>`<option ${c===o.cls?'selected':''}>${c}</option>`).join('')}</select></td>
+    <td><span class="tag ${o.pub?'pub':'prv'}" style="cursor:pointer" onclick="togglePub('${k}')">${o.pub?'Public':'Private'}</span></td>
+    <td class="row">${o.marker?`<button onclick="restore('${k}')">Restore</button>`:`<button onclick="get('${k}')">Open URL</button><button onclick="presign('${k}')">Pre-sign</button>${b.cdn?`<button onclick="cdnGet('${k}')">CDN GET</button>`:''}<button class="danger" onclick="delObj('${k}')">Delete</button>`}</td></tr>
+    ${s?`<tr><td colspan="5"><code>${s.url}</code><button onclick="useSigned('${k}')">Test link</button> <b data-exp="${s.exp}"></b></td></tr>`:''}`}).join('');
+  $('main').innerHTML=`<div class="card"><div class="row" style="justify-content:space-between"><h3>s3://${cur} <span class="tag">${b.region}</span></h3>
+    <button onclick="toggleVer()">Versioning: <b>${b.ver?'Enabled':'Suspended'}</b></button></div>
+    <input type="file" id="fi" multiple style="display:none" onchange="upload(this.files)">
+    <button class="pri" onclick="$('fi').click()">⬆ Upload objects</button>
+    <p class="mut">Click Public/Private to change the object ACL. Private objects return 403 on direct access.</p>
+    <table><tr><th>Key</th><th>Size</th><th>Storage class</th><th>Access</th><th>Actions</th></tr>${rows||'<tr><td colspan="5" class="mut">Bucket is empty.</td></tr>'}</table></div>
+    <div class="card enh"><h3>⭐ Enhancements</h3>
+    <p><b>1. Pre-signed URL with live expiry:</b> share a private object temporarily. Expiry (seconds): <input id="ex" type="number" value="30" min="5" style="width:90px;display:inline"></p>
+    <p><b>2. Live storage cost estimator:</b> <b>${fmt(tot)}</b> stored · est. <b>$${cost.toFixed(8)}</b>/month (Standard $0.023, Standard-IA $0.0125, Glacier $0.004 per GB-month). Change an object's storage class to see the cost drop.</p></div>${extra(b)}`;
+}
+draw();
+</script>
+</body>
+</html>
